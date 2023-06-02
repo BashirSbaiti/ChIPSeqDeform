@@ -11,7 +11,7 @@ import dill
 plt.tight_layout()
 
 PLOT_EXPANDING_SEED = False
-ON_CLUSTER = True
+ON_CLUSTER = False
 
 if not ON_CLUSTER:
     import seaborn as sns
@@ -183,53 +183,37 @@ if PLOT_EXPANDING_SEED:
             frac = totalPeaks / totalSites
             fracs.append(frac)
             print(f"{seq} in {name}: {totalPeaks} peaks, {totalSites} sites, {frac} peaks per site")
-        plt.figure(figsize=(8, 6))
+        fig = plt.figure(figsize=(8, 6))
         plt.plot(seqs, fracs, linestyle="dashed")
         plt.ylabel("Fraction of Sites With a Peak")
         plt.xticks(rotation=45)
         plt.subplots_adjust(bottom=0.15)
         plt.savefig(f"figures/ExpandingSeed{name}")
+        plt.close(fig)
         sampleInd += 1
-
 
 #### Now we investigate deformability stuff
 
 ## Plot binding activity over the genome as a rolling average
 
-def getSmoothedPoint(arr, indx, surr=250):
-    """ :returns tuple of mean, standard deviation of surr surrounding base pairs ON EACH SIDE at index indx"""
-    arr = list(arr)  # make sure it's a list so that + operator concatenates instead of adding
-    #TODO: ideas to speed this up, load data into a pandas df and use df.rolling. for rolling we need sd too. to make it work for edge of genome, make a copy of the end of the genome to the beginning
-    upperBound = indx + surr + 1  # exclusive
-    lowerBound = indx - surr  # inclusive
-    if upperBound > len(arr):
-        overflow = (upperBound) - len(arr)
-        region = arr[lowerBound:] + arr[0:overflow]
-    elif lowerBound < 0:
-        region = arr[lowerBound:] + arr[0:upperBound]
-    else:
-        region = arr[lowerBound:upperBound]
-
-    arrReg = np.array(region)
-
-    return arrReg.mean(), arrReg.std()
+window = 100000
+# list(arr[slice]) + list(arr) copies the last window-1 elements agin so they are not wiped out by rolling function
+allPeaksDfExpand = pd.concat([pd.Series(list(arr[-(window-1):]) + list(arr), name=name) for arr, name in zip(allArrs, names)], axis=1)
+raAllPeaksDfExpand = allPeaksDfExpand.rolling(window, axis=0).mean()
+rstdAllPeaksDfExpand = allPeaksDfExpand.rolling(window, axis=0).std()
+raAllPeaksDf = raAllPeaksDfExpand.iloc[window-1:,:].reset_index(drop=True)
+rstdAllPeaksDf = rstdAllPeaksDfExpand.iloc[window-1:,:].reset_index(drop=True)
 
 
-surr = 250
-for arr, name in zip(allArrs, names):
-    means = np.zeros(len(arr))
-    stdevs = np.zeros(len(arr))
-    for i in range(len(arr)):
-        mean, std = getSmoothedPoint(arr, i, surr=surr)
-        means[i] = mean
-        stdevs[i] = std
-
+for colName in raAllPeaksDf.columns:
+    rollAvg = raAllPeaksDf.loc[:, colName]
+    rollStd = rstdAllPeaksDf.loc[:, colName]
 
     fig = plt.figure(figsize=(8, 6))
-    plt.title(f"All Binding Events Across the Genome for gRNA {name}, Averaged w/Surrounding {surr}bp")
+    plt.title(f"All Binding Events Across the Genome for gRNA {colName}, Averaged w/Surrounding {window}bp")
     plt.xlabel("Location on MG1655 Genome")
     plt.ylabel("Intensity")
-    plt.plot(means)
-    plt.fill_between(np.arange(0, len(arr), 1), means-stdevs, means+stdevs, alpha=0.5)
+    plt.plot(rollAvg)
+    plt.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.1*rollStd, rollAvg + 0.1*rollStd, alpha=0.5)
     plt.tight_layout()
-    plt.savefig(f"figures/AveragedBindingAcrossGenome{name}")
+    plt.savefig(f"figures/AveragedBindingAcrossGenome{colName}")
