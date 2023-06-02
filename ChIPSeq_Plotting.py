@@ -197,23 +197,28 @@ if PLOT_EXPANDING_SEED:
 ## Plot binding activity over the genome as a rolling average
 
 window = 100000
-# list(arr[slice]) + list(arr) copies the last window-1 elements agin so they are not wiped out by rolling function
+# list(arr[slice]) + list(arr) copies the last window-1 elements again, so they are not wiped out by rolling function
 allPeaksDfExpand = pd.concat([pd.Series(list(arr[-(window-1):]) + list(arr), name=name) for arr, name in zip(allArrs, names)], axis=1)
 raAllPeaksDfExpand = allPeaksDfExpand.rolling(window, axis=0).mean()
 rstdAllPeaksDfExpand = allPeaksDfExpand.rolling(window, axis=0).std()
 raAllPeaksDf = raAllPeaksDfExpand.iloc[window-1:,:].reset_index(drop=True)
 rstdAllPeaksDf = rstdAllPeaksDfExpand.iloc[window-1:,:].reset_index(drop=True)
 
+fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
+colors = ["red", "green", "blue"]
 
-for colName in raAllPeaksDf.columns:
+for colName, ax, color in zip(raAllPeaksDf.columns, axs, colors):
     rollAvg = raAllPeaksDf.loc[:, colName]
     rollStd = rstdAllPeaksDf.loc[:, colName]
 
-    fig = plt.figure(figsize=(8, 6))
-    plt.title(f"All Binding Events Across the Genome for gRNA {colName}, Averaged w/Surrounding {window}bp")
-    plt.xlabel("Location on MG1655 Genome")
-    plt.ylabel("Intensity")
-    plt.plot(rollAvg)
-    plt.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.1*rollStd, rollAvg + 0.1*rollStd, alpha=0.5)
-    plt.tight_layout()
-    plt.savefig(f"figures/AveragedBindingAcrossGenome{colName}")
+    ax.plot(rollAvg, label=colName, color=color)
+    ax.legend()
+    ax.set_ylabel("Intensity")
+    ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0*rollStd, rollAvg + 0.0*rollStd, color=color, alpha=0.5)
+
+fig.suptitle(f"All Binding Events Across the Genome for all gRNA, Averaged w/Surrounding {window}bp")
+plt.xticks(range(0, len(allArrs[0]), len(allArrs[0]) // 24), rotation=45)
+axs[-1].set_xlabel("Location on MG1655 Genome")
+plt.tight_layout()
+plt.subplots_adjust(wspace=0, hspace=0)
+plt.savefig(f"figures/AveragedBindingAcrossGenomeAll")
