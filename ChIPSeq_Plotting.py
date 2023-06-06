@@ -62,6 +62,13 @@ for file in os.listdir("GEOFiles"):
         ser = pd.Series(peaks, name=name, dtype=object)
         allPeakSers.append(ser)
 
+## Verify that all loc distances are 1, so we can just use the start loc as peak pos
+for ser in allPeakSers:
+    for el in ser:
+        loc = el.getLoc()
+        if (loc[1] - loc[0]) != 1:
+            raise Exception(f"loc difference is {loc[1] - loc[0]} not 1")
+
 ### Plot number of binding events per gRNA
 
 names = list()
@@ -77,6 +84,7 @@ dfEventsPergRNA = pd.concat([serNames, serBinds], axis=1)
 if not ON_CLUSTER:
     sns.barplot(data=dfEventsPergRNA, x="name", y="bind events", errorbar=('ci', 90))
     plt.savefig(f"figures/BindingEventsPergRNA")
+    plt.close()
 
 # Turn series into arrays where index = start loc, intensity = val at index
 # load all these arrays into a list and add replicates
@@ -116,6 +124,7 @@ for ser in allArrsNonzero:
     plt.xlabel("Intensity")
     plt.title(f"Distribution of Peak Intensities for {ser.name}")
     plt.savefig(f"figures/DistIntensities{ser.name}")
+    plt.close()
 
 ### plot binding events across a window for all gRNAs
 
@@ -142,8 +151,23 @@ for i, ser in enumerate(allArrsNonzero):
     plt.tight_layout()
     plt.savefig(f"figures/AllBindingAcrossGenome{names[i]}")
     # plt.show()
+    plt.close()
 
 ### Plot number of peaks in expanding complementary sequence (fig 4d,f)
+
+# binding site for all gRNAs = gRNA seq + NGG
+AGGAAseq = "GGGACCTAAGATTTGAGGAA" + ".GG"
+ACCCAseq = "TCGAACACACTCTCTACCCA" + ".GG"
+LacZseq = "TCGTTTTACAACGTCGTGAC" + ".GG"
+
+bindSites = [LacZseq, AGGAAseq, ACCCAseq]
+names = ["lacZ", "AGGAA", "ACCCA"]
+
+### import referance genome in the same way as main.py
+RefGenomeFname = "Rostain Supp Info/MG1655 Referance Genome/GCA_000005845.2_ASM584v2_genomic.fna"
+record = SeqIO.parse(RefGenomeFname, "fasta")
+refObj = list(record)[0]
+refGenome = (refObj.seq, refObj.seq.reverse_complement())
 
 if PLOT_EXPANDING_SEED:
 
@@ -152,20 +176,6 @@ if PLOT_EXPANDING_SEED:
             :param span: array like of (inclusive, exclusive) specifying span to count peaks in"""
         return len([val for ind, val in peakSer.items() if span[0] <= ind < span[1]])
 
-
-    # binding site for all gRNAs = gRNA seq + NGG
-    AGGAAseq = "GGGACCTAAGATTTGAGGAA" + ".GG"
-    ACCCAseq = "TCGAACACACTCTCTACCCA" + ".GG"
-    LacZseq = "TCGTTTTACAACGTCGTGAC" + ".GG"
-
-    bindSites = [LacZseq, AGGAAseq, ACCCAseq]
-    names = ["lacZ", "AGGAA", "ACCCA"]
-
-    ### import referance genome in the same way as main.py
-    RefGenomeFname = "Rostain Supp Info/MG1655 Referance Genome/GCA_000005845.2_ASM584v2_genomic.fna"
-    record = SeqIO.parse(RefGenomeFname, "fasta")
-    refObj = list(record)[0]
-    refGenome = (refObj.seq, refObj.seq.reverse_complement())
 
     sampleInd = 0
     for name, bindSite in zip(names, bindSites):
@@ -189,20 +199,23 @@ if PLOT_EXPANDING_SEED:
         plt.xticks(rotation=45)
         plt.subplots_adjust(bottom=0.15)
         plt.savefig(f"figures/ExpandingSeed{name}")
-        plt.close(fig)
+        plt.close()
         sampleInd += 1
 
 #### Now we investigate deformability stuff
 
 ## Plot binding activity over the genome as a rolling average
 
-window = 100000
-# list(arr[slice]) + list(arr) copies the last window-1 elements again, so they are not wiped out by rolling function
-allPeaksDfExpand = pd.concat([pd.Series(list(arr[-(window-1):]) + list(arr), name=name) for arr, name in zip(allArrs, names)], axis=1)
-raAllPeaksDfExpand = allPeaksDfExpand.rolling(window, axis=0).mean()
-rstdAllPeaksDfExpand = allPeaksDfExpand.rolling(window, axis=0).std()
-raAllPeaksDf = raAllPeaksDfExpand.iloc[window-1:,:].reset_index(drop=True)
-rstdAllPeaksDf = rstdAllPeaksDfExpand.iloc[window-1:,:].reset_index(drop=True)
+bindWindow = 100000
+allPeaksDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allArrs, names)],
+                       axis=1)  # this will not be useful unless we use window = 1 = no RA (used in later calculations)
+# list(arr[slice]) + list(arr) copies the last bindWindow-1 elements again, so they are not wiped out by rolling function
+allPeaksDfExpand = pd.concat(
+    [pd.Series(list(arr[-(bindWindow - 1):]) + list(arr), name=name) for arr, name in zip(allArrs, names)], axis=1)
+raAllPeaksDfExpand = allPeaksDfExpand.rolling(bindWindow, axis=0).mean()
+rstdAllPeaksDfExpand = allPeaksDfExpand.rolling(bindWindow, axis=0).std()
+raAllPeaksDf = raAllPeaksDfExpand.iloc[bindWindow - 1:, :].reset_index(drop=True)
+rstdAllPeaksDf = rstdAllPeaksDfExpand.iloc[bindWindow - 1:, :].reset_index(drop=True)
 
 fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
 colors = ["red", "green", "blue"]
@@ -214,11 +227,166 @@ for colName, ax, color in zip(raAllPeaksDf.columns, axs, colors):
     ax.plot(rollAvg, label=colName, color=color)
     ax.legend()
     ax.set_ylabel("Intensity")
-    ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0*rollStd, rollAvg + 0.0*rollStd, color=color, alpha=0.5)
+    ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0 * rollStd, rollAvg + 0.0 * rollStd, color=color,
+                    alpha=0.5)
 
-fig.suptitle(f"All Binding Events Across the Genome for all gRNA, Averaged w/Surrounding {window}bp")
+fig.suptitle(f"All Binding Events Across the Genome for all gRNA, Averaged w/Surrounding {bindWindow}bp")
 plt.xticks(range(0, len(allArrs[0]), len(allArrs[0]) // 24), rotation=45)
 axs[-1].set_xlabel("Location on MG1655 Genome")
 plt.tight_layout()
 plt.subplots_adjust(wspace=0, hspace=0)
 plt.savefig(f"figures/AveragedBindingAcrossGenomeAll")
+plt.close()
+
+## Impletment plotting of normalized sequence complementarity index and see how that varies across genome'
+
+PAM_LOCALIZATION = False
+
+allScoreDicts = list()
+for ts, name in zip(bindSites, names):
+    scoreDict = {
+        ".GG": 3}  # key = match, value = corresponding score (we define PAM only as 3 so that ts overlap len = score, but scale is relative)
+    for start in range(len(ts) - 4, -1, -1):
+        scoreDict[ts[start:]] = len(ts[start:])
+    allScoreDicts.append(scoreDict)
+
+allScoreArr = list()
+for scoreDict, name in zip(allScoreDicts, names):
+    scoreArr = np.zeros(LEN_CHR)
+    for strandNum, strand in enumerate(refGenome):
+        strand = str(strand)
+        for val in re.finditer(r".GG", strand, overlapped=True):
+            start, stop = val.span()
+            origStart = start  # we will localize seq complementarity score at the location of the corresponding PAM site (start of PAM, N in NGG)
+            exceededMaxMatch = False
+            while not exceededMaxMatch:
+                start -= 1
+                if start < 0:
+                    raise Exception("no good")
+                newSeq = strand[start:stop]
+                generalNewSeq = newSeq[:-3] + ".GG"
+                if generalNewSeq not in scoreDict.keys():
+                    exceededMaxMatch = True
+            start += 1
+            match = strand[start:stop]
+            generalMatch = match[:-3] + ".GG"
+            score = scoreDict[generalMatch]
+            if PAM_LOCALIZATION:
+                scoreArr[origStart if strandNum == 0 else LEN_CHR - 1 - origStart] += score
+            else:
+                if strandNum == 0:
+                    start = start
+                    stop = stop
+                elif strandNum == 1:
+                    start = LEN_CHR-1-stop
+                    stop = LEN_CHR-start
+                scoreArr[start:stop] = [val + score for val in scoreArr[start:stop]]
+    allScoreArr.append(scoreArr)
+
+# first, take rolling avg
+scoreWindow = 100000
+allScoresDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allScoreArr, names)],
+                        axis=1)  # this will not be useful unless we use window = 1 = no RA (used in later calculations)
+if scoreWindow == 1:  # if scoreWindow == 1, don't do rolling average
+    raAllScoresDf = allScoresDf
+    rstdAllScoresDf = 0 * raAllScoresDf
+else:
+    # list(arr[slice]) + list(arr) copies the last scoreWindow-1 elements again, so they are not wiped out by rolling function
+    allScoresDfExpand = pd.concat(
+        [pd.Series(list(arr[-(scoreWindow - 1):]) + list(arr), name=name) for arr, name in zip(allScoreArr, names)],
+        axis=1)
+    raAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).mean()
+    rstdAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).std()
+    raAllScoresDf = raAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
+    rstdAllScoresDf = rstdAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
+
+# then, plot
+fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
+colors = ["red", "green", "blue"]
+
+for colName, ax, color in zip(raAllScoresDf.columns, axs, colors):
+    rollAvg = raAllScoresDf.loc[:, colName]
+    rollStd = rstdAllScoresDf.loc[:, colName]
+
+    # ax.plot(rollAvg, ".", s=5, label=colName, color=color)
+    ax.scatter(np.arange(0, len(rollAvg), 1), rollAvg, s=3, alpha=0.5, label=colName, color=color)
+    ax.legend()
+    ax.set_ylabel("Score")
+    # ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0 * rollStd, rollAvg + 0.0 * rollStd, color=color,
+    # alpha=0.5)
+
+fig.suptitle(f"gRNA Complementarity Score across the genome for all gRNA, rolling window = {scoreWindow}bp")
+axs[-1].set_xlabel("Location on MG1655 Genome")
+plt.ylabel("Score")
+plt.xticks(range(0, LEN_CHR, (LEN_CHR) // 24), rotation=45)
+plt.tight_layout()
+plt.subplots_adjust(wspace=0, hspace=0)
+plt.savefig(f"figures/AllScoresComparisonRA{scoreWindow}")
+plt.close()
+
+## Plot complementarity score vs binding activity side by side to see if there is a relation
+
+# TODO: add stds back in here after chatting with Adim
+for name in names:
+    rollAvgScore = raAllScoresDf.loc[:, name]
+    rollStdScore = rstdAllScoresDf.loc[:, name]
+
+    rollAvgBind = raAllPeaksDf.loc[:, name]
+    rollStdBind = rstdAllPeaksDf.loc[:, name]
+
+    fig, axs = plt.subplots(2, 1, sharex="all", figsize=(8, 5))
+    fig.suptitle(f"gRNA Complementarity Score vs Bind Activity for {name}, Rolling Avg {scoreWindow}bp")
+    if scoreWindow != bindWindow:
+        raise Exception(f"Score rolling avg window {scoreWindow} is not equal to bind window {bindWindow}.")
+
+    axs[0].plot(rollAvgScore, label=f"{name} Comp Score")
+    axs[0].legend()
+    axs[0].set_ylabel("Comp Score")
+
+    axs[1].plot(rollAvgBind, label=f"{name} Binding")
+    axs[1].legend()
+    axs[1].set_ylabel("Binding Intensity")
+    axs[1].set_xlabel("Location on MG1655 Genome")
+
+    plt.xticks(range(0, LEN_CHR, LEN_CHR // 24), rotation=45)
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.savefig(f"figures/ScorevsBinding{name}SideBySide")
+    plt.close()
+
+# Same as above, but plot one against the other
+USE_ROLLAVG = False
+
+for name in names:
+    if USE_ROLLAVG:
+        score = raAllScoresDf.loc[:, name]
+        stdScore = rstdAllScoresDf.loc[:, name]
+
+        bind = raAllPeaksDf.loc[:, name]
+        stdBind = rstdAllPeaksDf.loc[:, name]
+    else:
+        score = allScoresDf.loc[:, name]
+        stdScore = 0 * score
+
+        bind = allPeaksDf.loc[:, name]
+        stdBind = 0 * bind
+
+    fig = plt.figure()
+    if USE_ROLLAVG:
+        plt.title(f"Bind Activity vs gRNA Complementarity for {name}, Rolling Avg {scoreWindow}bp")
+    else:
+        plt.title(f"Bind Activity vs gRNA Complementarity for {name}")
+
+    if scoreWindow != bindWindow and USE_ROLLAVG:
+        raise Exception(f"Score rolling avg window {scoreWindow} is not equal to bind window {bindWindow}.")
+
+    plt.scatter(x=score, y=bind, s=3, alpha=0.5)
+    plt.xlabel("Comp Score")
+    plt.ylabel("Binding Intensity")
+
+    plt.tight_layout()
+    if USE_ROLLAVG:
+        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRA{bindWindow}")
+    else:
+        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRANone")
+    plt.close()
