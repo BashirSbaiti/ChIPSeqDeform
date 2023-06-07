@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 import matplotlib as mpl
 import regex as re
 import dill
+import time
 
 plt.tight_layout()
 
@@ -238,9 +239,11 @@ plt.subplots_adjust(wspace=0, hspace=0)
 plt.savefig(f"figures/AveragedBindingAcrossGenomeAll")
 plt.close()
 
+print(f"{time.time()}: Completed All Before Score Calcs!")
+
 ## Impletment plotting of normalized sequence complementarity index and see how that varies across genome'
 
-PAM_LOCALIZATION = False
+PAM_LOCALIZATION = True
 
 allScoreDicts = list()
 for ts, name in zip(bindSites, names):
@@ -262,7 +265,7 @@ for scoreDict, name in zip(allScoreDicts, names):
             while not exceededMaxMatch:
                 start -= 1
                 if start < 0:
-                    raise Exception("no good")
+                    raise Exception("Invalid Start index when calculating Comp Score")
                 newSeq = strand[start:stop]
                 generalNewSeq = newSeq[:-3] + ".GG"
                 if generalNewSeq not in scoreDict.keys():
@@ -275,14 +278,15 @@ for scoreDict, name in zip(allScoreDicts, names):
                 scoreArr[origStart if strandNum == 0 else LEN_CHR - 1 - origStart] += score
             else:
                 if strandNum == 0:
-                    start = start
-                    stop = stop
+                    newStart = start
+                    newStop = stop
                 elif strandNum == 1:
-                    start = LEN_CHR-1-stop
-                    stop = LEN_CHR-start
-                scoreArr[start:stop] = [val + score for val in scoreArr[start:stop]]
+                    newStart = LEN_CHR-stop
+                    newStop = LEN_CHR-start
+                scoreArr[newStart:newStop] = [val + score for val in scoreArr[start:stop]]
     allScoreArr.append(scoreArr)
 
+print(f"{time.time()}: Completed Score Calculations!")
 # first, take rolling avg
 scoreWindow = 100000
 allScoresDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allScoreArr, names)],
@@ -300,6 +304,7 @@ else:
     raAllScoresDf = raAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
     rstdAllScoresDf = rstdAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
 
+print(f"{time.time()}: Completed Score Rolling Avg!")
 # then, plot
 fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
 colors = ["red", "green", "blue"]
@@ -321,7 +326,7 @@ plt.ylabel("Score")
 plt.xticks(range(0, LEN_CHR, (LEN_CHR) // 24), rotation=45)
 plt.tight_layout()
 plt.subplots_adjust(wspace=0, hspace=0)
-plt.savefig(f"figures/AllScoresComparisonRA{scoreWindow}")
+plt.savefig(f"figures/AllScoresComparisonRA{scoreWindow}{'DELOC' if not PAM_LOCALIZATION else ''}")
 plt.close()
 
 ## Plot complementarity score vs binding activity side by side to see if there is a relation
@@ -351,11 +356,12 @@ for name in names:
     plt.xticks(range(0, LEN_CHR, LEN_CHR // 24), rotation=45)
     plt.tight_layout()
     plt.subplots_adjust(wspace=0, hspace=0)
-    plt.savefig(f"figures/ScorevsBinding{name}SideBySide")
+    plt.savefig(f"figures/ScorevsBinding{name}SideBySide{'DELOC' if not PAM_LOCALIZATION else ''}")
     plt.close()
 
 # Same as above, but plot one against the other
-USE_ROLLAVG = False
+USE_ROLLAVG = True
+ZOOM = True
 
 for name in names:
     if USE_ROLLAVG:
@@ -383,10 +389,12 @@ for name in names:
     plt.scatter(x=score, y=bind, s=3, alpha=0.5)
     plt.xlabel("Comp Score")
     plt.ylabel("Binding Intensity")
+    if ZOOM:
+        plt.xlim(left=0.35 if PAM_LOCALIZATION else 1.2)
 
     plt.tight_layout()
     if USE_ROLLAVG:
-        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRA{bindWindow}")
+        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRA{bindWindow}{'DELOC' if not PAM_LOCALIZATION else ''}{'Zoom' if ZOOM else ''}")
     else:
-        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRANone")
+        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRANone{'DELOC' if not PAM_LOCALIZATION else ''}{'Zoom' if ZOOM else ''}")
     plt.close()
