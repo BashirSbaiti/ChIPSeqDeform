@@ -203,11 +203,9 @@ if PLOT_EXPANDING_SEED:
         plt.close()
         sampleInd += 1
 
-#### Now we investigate deformability stuff
-
 ## Plot binding activity over the genome as a rolling average
 
-bindWindow = 100000
+bindWindow = 10000
 allPeaksDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allArrs, names)],
                        axis=1)  # this will not be useful unless we use window = 1 = no RA (used in later calculations)
 # list(arr[slice]) + list(arr) copies the last bindWindow-1 elements again, so they are not wiped out by rolling function
@@ -243,7 +241,7 @@ print(f"{time.time()}: Completed All Before Score Calcs!")
 
 ## Impletment plotting of normalized sequence complementarity index and see how that varies across genome'
 
-PAM_LOCALIZATION = True
+PAM_LOCALIZATION = False
 
 allScoreDicts = list()
 for ts, name in zip(bindSites, names):
@@ -281,53 +279,53 @@ for scoreDict, name in zip(allScoreDicts, names):
                     newStart = start
                     newStop = stop
                 elif strandNum == 1:
-                    newStart = LEN_CHR-stop
-                    newStop = LEN_CHR-start
-                scoreArr[newStart:newStop] = [val + score for val in scoreArr[start:stop]]
+                    newStart = len(scoreArr)-stop
+                    newStop = len(scoreArr)-start
+                scoreArr[newStart:newStop] = [val + score for val in scoreArr[newStart:newStop]]
     allScoreArr.append(scoreArr)
 
 print(f"{time.time()}: Completed Score Calculations!")
 # first, take rolling avg
-scoreWindow = 100000
-allScoresDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allScoreArr, names)],
-                        axis=1)  # this will not be useful unless we use window = 1 = no RA (used in later calculations)
-if scoreWindow == 1:  # if scoreWindow == 1, don't do rolling average
-    raAllScoresDf = allScoresDf
-    rstdAllScoresDf = 0 * raAllScoresDf
-else:
-    # list(arr[slice]) + list(arr) copies the last scoreWindow-1 elements again, so they are not wiped out by rolling function
-    allScoresDfExpand = pd.concat(
-        [pd.Series(list(arr[-(scoreWindow - 1):]) + list(arr), name=name) for arr, name in zip(allScoreArr, names)],
-        axis=1)
-    raAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).mean()
-    rstdAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).std()
-    raAllScoresDf = raAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
-    rstdAllScoresDf = rstdAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
+for scoreWindow in [10000]:
+    allScoresDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allScoreArr, names)],
+                            axis=1)  # this will not be useful unless we use window = 1 = no RA (used in later calculations)
+    if scoreWindow == 1:  # if scoreWindow == 1, don't do rolling average
+        raAllScoresDf = allScoresDf
+        rstdAllScoresDf = 0 * raAllScoresDf
+    else:
+        # list(arr[slice]) + list(arr) copies the last scoreWindow-1 elements again, so they are not wiped out by rolling function
+        allScoresDfExpand = pd.concat(
+            [pd.Series(list(arr[-(scoreWindow - 1):]) + list(arr), name=name) for arr, name in zip(allScoreArr, names)],
+            axis=1)
+        raAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).mean()
+        rstdAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).std()
+        raAllScoresDf = raAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
+        rstdAllScoresDf = rstdAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
 
-print(f"{time.time()}: Completed Score Rolling Avg!")
-# then, plot
-fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
-colors = ["red", "green", "blue"]
+    print(f"{time.time()}: Completed Score Rolling Avg!")
+    # then, plot
+    fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
+    colors = ["red", "green", "blue"]
 
-for colName, ax, color in zip(raAllScoresDf.columns, axs, colors):
-    rollAvg = raAllScoresDf.loc[:, colName]
-    rollStd = rstdAllScoresDf.loc[:, colName]
+    for colName, ax, color in zip(raAllScoresDf.columns, axs, colors):
+        rollAvg = raAllScoresDf.loc[:, colName]
+        rollStd = rstdAllScoresDf.loc[:, colName]
 
-    # ax.plot(rollAvg, ".", s=5, label=colName, color=color)
-    ax.scatter(np.arange(0, len(rollAvg), 1), rollAvg, s=3, alpha=0.5, label=colName, color=color)
-    ax.legend()
-    ax.set_ylabel("Score")
-    # ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0 * rollStd, rollAvg + 0.0 * rollStd, color=color,
-    # alpha=0.5)
+        # ax.plot(rollAvg, ".", s=5, label=colName, color=color)
+        ax.scatter(np.arange(0, len(rollAvg), 1), rollAvg, s=3, alpha=0.5, label=colName, color=color)
+        ax.legend()
+        ax.set_ylabel("Score")
+        # ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0 * rollStd, rollAvg + 0.0 * rollStd, color=color,
+        # alpha=0.5)
 
-fig.suptitle(f"gRNA Complementarity Score across the genome for all gRNA, rolling window = {scoreWindow}bp")
-axs[-1].set_xlabel("Location on MG1655 Genome")
-plt.ylabel("Score")
-plt.xticks(range(0, LEN_CHR, (LEN_CHR) // 24), rotation=45)
-plt.tight_layout()
-plt.subplots_adjust(wspace=0, hspace=0)
-plt.savefig(f"figures/AllScoresComparisonRA{scoreWindow}{'DELOC' if not PAM_LOCALIZATION else ''}")
-plt.close()
+    fig.suptitle(f"gRNA Complementarity Score across the genome for all gRNA, rolling window = {scoreWindow}bp")
+    axs[-1].set_xlabel("Location on MG1655 Genome")
+    plt.ylabel("Score")
+    plt.xticks(range(0, LEN_CHR, (LEN_CHR) // 24), rotation=45)
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0, hspace=0)
+    plt.savefig(f"figures/AllScoresComparisonRA{scoreWindow}{'DELOC' if not PAM_LOCALIZATION else ''}")
+    plt.close()
 
 ## Plot complementarity score vs binding activity side by side to see if there is a relation
 
@@ -361,7 +359,7 @@ for name in names:
 
 # Same as above, but plot one against the other
 USE_ROLLAVG = True
-ZOOM = True
+ZOOM = False
 
 for name in names:
     if USE_ROLLAVG:
@@ -386,10 +384,10 @@ for name in names:
     if scoreWindow != bindWindow and USE_ROLLAVG:
         raise Exception(f"Score rolling avg window {scoreWindow} is not equal to bind window {bindWindow}.")
 
-    plt.scatter(x=score, y=bind, s=3, alpha=0.5)
+    plt.scatter(x=score, y=bind, s=1, alpha=0.5)
     plt.xlabel("Comp Score")
     plt.ylabel("Binding Intensity")
-    if ZOOM:
+    if ZOOM and USE_ROLLAVG:
         plt.xlim(left=0.35 if PAM_LOCALIZATION else 1.2)
 
     plt.tight_layout()

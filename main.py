@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+import numpy as np
 from Bio import Entrez
 from Bio import SeqIO
 from Bio.Seq import Seq
@@ -203,17 +205,30 @@ class GenomicTgtSite:
         return context5DeformAvg, context3DeformAvg
 
 
-allTs = list()
+allPAMIndxs = list()
 
 for strandNum, strand in enumerate(refGenome):
     for val in re.finditer(r".GG", str(strand), overlapped=True):
-        PAMLoc = (strandNum, val.span()[0], val.span()[1])
-        ts = GenomicTgtSite(refGenome, PAMLoc, contextLen=500)
-        allTs.append(ts)
+        allPAMIndxs.append(val.span()[0] if strandNum == 0 else len(strand) - 1 - val.span()[0])
 
-with open("Rostain Supp Info/MG1655 Referance Genome/allTgtSites", "wb") as f:
-    dill.dump(allTs, f)
+plt.figure()
+plt.hist(allPAMIndxs, bins=1000)
 
-# TODO: pickle allTs with dill
+allPAMScores = np.zeros(len(refGenome[0]))
+for i in allPAMIndxs:
+    allPAMScores[i] += 1
+
+scoreWindow = 2
+allScoresDfExpand = pd.Series(list(allPAMScores[-(scoreWindow - 1):]) + list(allPAMScores), name="Markers at all PAMs")
+raAllScoresExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).mean()
+rstdAllScoresExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).std()
+raAllScores = raAllScoresExpand.iloc[scoreWindow - 1:].reset_index(drop=True)
+rstdAllScores = rstdAllScoresExpand.iloc[scoreWindow - 1:].reset_index(drop=True)
+
+plt.figure()
+plt.plot(raAllScores)
+plt.title(scoreWindow)
+plt.show()
+
 
 # TODO: calculating Tm could be a good control
