@@ -41,7 +41,7 @@ class Peak:
 
 
 CHROMOSOME = "NC_000913"
-LEN_CHR = 4699742
+LEN_CHR = 4641652
 
 allPeakSers = list()  # list of series, each series contains all peaks for one ChIP seq file
 
@@ -175,7 +175,7 @@ if PLOT_EXPANDING_SEED:
     def countPeaksInSpan(peakSer, span):
         """ :param peakSer: series of peaks where index = location, value = intensity
             :param span: array like of (inclusive, exclusive) specifying span to count peaks in"""
-        return len([val for ind, val in peakSer.items() if span[0] <= ind < span[1]])
+        return 1 if len([val for ind, val in peakSer.items() if span[0] <= ind < span[1]])>0 else 0
 
 
     sampleInd = 0
@@ -361,6 +361,8 @@ for name in names:
 USE_ROLLAVG = True
 ZOOM = False
 
+#TODO: why so many binding events at 0 comp score? probably because of other PAM sites like NAG, take this into acct ...
+
 for name in names:
     if USE_ROLLAVG:
         score = raAllScoresDf.loc[:, name]
@@ -396,3 +398,11 @@ for name in names:
     else:
         plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRANone{'DELOC' if not PAM_LOCALIZATION else ''}{'Zoom' if ZOOM else ''}")
     plt.close()
+
+# Pickle allPeaks, allBinds info to use in other files
+
+with open("allPeaksDf.pkl", "wb") as dill_file:
+    dill.dump(allPeaksDf, dill_file)
+
+with open("allScoresDf.pkl", "wb") as dill_file:
+    dill.dump(allScoresDf, dill_file)
