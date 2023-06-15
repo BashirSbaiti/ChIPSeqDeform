@@ -63,7 +63,19 @@ for file in os.listdir("GEOFiles"):
         ser = pd.Series(peaks, name=name, dtype=object)
         allPeakSers.append(ser)
 
-## Verify that all loc distances are 1, so we can just use the start loc as peak pos
+allPeakArrLabeled = list()
+for ser in allPeakSers:
+    peakArr = np.zeros(LEN_CHR)
+    for el in ser:
+        peakArr[el.getLoc()[0]] = el.getIntensity()
+    peakArrLabeled = pd.Series(peakArr, name=ser.name[:ser.name.find("-")])
+    allPeakArrLabeled.append(peakArrLabeled)
+peaksArrDf = pd.concat(allPeakArrLabeled, axis=1)
+
+with open("allPeaksDfReps.pkl", "wb") as dill_file:
+    dill.dump(peaksArrDf, dill_file)
+
+    ## Verify that all loc distances are 1, so we can just use the start loc as peak pos
 for ser in allPeakSers:
     for el in ser:
         loc = el.getLoc()
