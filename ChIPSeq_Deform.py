@@ -4,11 +4,9 @@ import pandas as pd
 import numpy as np
 from Bio import SeqIO
 from matplotlib import pyplot as plt
-import matplotlib as mpl
 import regex as re
 from Bio.Seq import Seq
 import dill
-import time
 
 plt.tight_layout()
 
@@ -144,7 +142,7 @@ if PLOT_GENOME_DEFORM:
         plt.savefig(f"figures/deform/{ax}DistAcrossGenomeChunk{chunkSize}Box")
         plt.close()
 
-# Redoing expanding seed cals
+# Redoing expanding seed calcs
 
 AGGAAseq = "GGGACCTAAGATTTGAGGAA" + ".GG"
 ACCCAseq = "TCGAACACACTCTCTACCCA" + ".GG"
@@ -154,114 +152,92 @@ bindSites = [LacZseq, AGGAAseq, ACCCAseq]
 names = ["lacZ", "AGGAA", "ACCCA"]
 
 deformAxis = "Rise"
-medDeformLimits = (7.78, 7.80)
+medDeformLimitss = [(7.782, 7.798), (7.784, 7.796), (7.788, 7.792)]
 # inclusive on both sides
 
-for name, bindSite in zip(names, bindSites):
-    peakSers = allPeaksDfReps.loc[:, name]
-    numReps = len(peakSers.columns)
-    seqs = [bindSite[start:] for start in range(len(bindSite) - 1 - 9, len(bindSite) - 2)]
-    fracSers = list()  # index = deform (LMH), value = fracBound/total for each rep, one per overlap seq
-    sitesSers = list()  # index = deform (LMH), value = total for each rep, one per overlap seq
-    avgIntensitySers = list()  # index = deform (LMH), value = average intensity of all bind events (across diff reps), one per overlap seq
-    stdIntensitySers = list()
-    # series of differing complementarity to gRNA+PAM
-    count = 0
-    for seq in seqs:
-        peaksPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(numReps)}  # key = deform category (LMH), value is list of num peaks for each rep
-        sitesPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(numReps)}  # key = LMH, val = list of totalSites for each rep
-        intensitiesPerDeform = {"Low": [], "Medium": [], "High": []}  # key = LMH, val = list of intensities across all reps
-        #count += 1
-        #if count == 3:
-        #    break
-        # only using fw strand of referance strand because I assume that if they find binding to the reverse strand they map it to the fw
-        for find in re.finditer(seq, str(refGenome[0]), overlapped=False):
-            ts = GenomicTgtSite(refGenome, (0, find.span()[1] - 3, find.span()[1]), contextLen=500)
-            deform = float(ts.deform5[deformAxis] + ts.deform5[deformAxis]) / 2.0
-            if medDeformLimits[0] <= deform <= medDeformLimits[1]:
-                deformCat = "Medium"
-            elif deform > medDeformLimits[1]:
-                deformCat = "High"
-            else:
-                deformCat = "Low"
-            for repNum in range(numReps): # for each replicate of each gRNA
-                peakSer = peakSers.iloc[:, repNum]
-                sitePeaks = 0
-                siteIntensity = 0
-                for pos in range(find.span()[0], find.span()[1]):  # search for a peak at all positions
-                    if peakSer.loc[pos] > 0:
-                        sitePeaks = 1
-                        siteIntensity = peakSer.loc[pos]
-                        break  # do not double count peaks
+for medDeformLimits in medDeformLimitss:
+    for name, bindSite in zip(names, bindSites):
+        peakSers = allPeaksDfReps.loc[:, name]
+        numReps = len(peakSers.columns)
+        seqs = [bindSite[start:] for start in range(len(bindSite) - 1 - 9, len(bindSite) - 2)] # series of differing complementarity to gRNA+PAM
+        fracSers = list()  # index = deform (LMH), value = fracBound/total for each rep, one per overlap seq
+        sitesSers = list()  # index = deform (LMH), value = total for each rep, one per overlap seq
+        intensitySers = list()  # index = deform (LMH), value = intensity all peaks across reps and in same rep, one per overlap seq
 
-                if sitePeaks == 0:  # if no peaks are found, the intensity at this site is zero
-                    siteIntensity = 0
+        foundPAMEnds = list()  # keep track of end of PAM of every seq we find so we dont double count one ...ngg in multiple categories
 
-                peaksPerDeform[deformCat][repNum] += sitePeaks
-                intensitiesPerDeform[deformCat].append(siteIntensity)
-                sitesPerDeform[deformCat][repNum] += 1
+        count = 0
+        for seq in seqs:
+            peaksPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(numReps)}  # key = deform category (LMH), value is list of num peaks for each rep
+            sitesPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(numReps)}  # key = LMH, val = list of totalSites for each rep
+            intensitiesPerDeform = {"Low": [], "Medium": [], "High": []}  # key = LMH, val = list of intensities across all reps
+            # count += 1
+            # if count == 4:
+            #     break
+            # only using fw strand of referance strand because I assume that if they find binding to the reverse strand they map it to the fw
+            for find in re.finditer(seq, str(refGenome[0]), overlapped=False):
+                if find.span()[1] not in foundPAMEnds:
+                    if seq != ".GG":
+                        foundPAMEnds.append(find.span()[1])
+                    ts = GenomicTgtSite(refGenome, (0, find.span()[1] - 3, find.span()[1]), contextLen=500)
+                    deform = float(ts.deform5[deformAxis] + ts.deform5[deformAxis]) / 2.0
+                    if medDeformLimits[0] <= deform <= medDeformLimits[1]:
+                        deformCat = "Medium"
+                    elif deform > medDeformLimits[1]:
+                        deformCat = "High"
+                    else:
+                        deformCat = "Low"
+                    for repNum in range(numReps): # for each replicate of each gRNA
+                        peakSer = peakSers.iloc[:, repNum]
+                        sitePeaks = 0
+                        siteIntensity = 0
+                        for pos in range(find.span()[0], find.span()[1]):  # search for a peak at all positions
+                            if peakSer.loc[pos] > 0:
+                                sitePeaks = 1
+                                siteIntensity = peakSer.loc[pos]
+                                break  # do not double count peaks
 
-        sitesSer = pd.Series(sitesPerDeform, name=seq)
-        sitesSers.append(sitesSer)
+                        if sitePeaks == 0:  # if no peaks are found, the intensity at this site is zero
+                            siteIntensity = 0
 
-        avgIntensityPerDeform = {}
-        stdIntensityPerDeform = {}
-        for deformCat in intensitiesPerDeform.keys():
-            avgIntensityPerDeform[deformCat] = (np.sum(intensitiesPerDeform[deformCat]) / np.sum(sitesPerDeform[deformCat])) if \
-                np.sum(sitesPerDeform[deformCat]) != 0 else 0.0
-            stdIntensityPerDeform[deformCat] = np.std(intensitiesPerDeform[deformCat]) if len(
-                intensitiesPerDeform[deformCat]) > 0 else 0.0
-        avgIntensitySer = pd.Series(avgIntensityPerDeform, name=seq)
-        stdIntensitySer = pd.Series(stdIntensityPerDeform, name=seq)
-        avgIntensitySers.append(avgIntensitySer)
-        stdIntensitySers.append(stdIntensitySer)
+                        peaksPerDeform[deformCat][repNum] += sitePeaks
+                        if siteIntensity != 0:
+                            intensitiesPerDeform[deformCat].append(siteIntensity)
+                        sitesPerDeform[deformCat][repNum] += 1
 
-        fracsPerDeform = {}
-        for deformCat in sitesPerDeform.keys():
-            fracsPerDeform[deformCat] = [(peaksPerDeform[deformCat][repNum] / sitesPerDeform[deformCat][repNum]) if sitesPerDeform[
-                                                                                                       deformCat][repNum] != 0 else 0.0 for repNum in range(numReps)]
-        fracSer = pd.Series(fracsPerDeform, name=seq)
-        fracSers.append(fracSer)
+            intensitySer = pd.Series(intensitiesPerDeform, name=seq)
+            intensitySers.append(intensitySer)
 
-    def elementWiseAvg(element):
-        return np.average(element)
-    def elementWiseStd(element):
-        return np.std(element)
+            sitesSer = pd.Series(sitesPerDeform, name=seq)
+            sitesSers.append(sitesSer)
 
-    # plot deform seperated line chart with fracs
-    deformSepFracDf = pd.concat(fracSers, axis=1) # each element is a list of len 3 for 3 reps
-    deformSepFracDfAvg = deformSepFracDf.apply(np.vectorize(elementWiseAvg))
-    deformSepFracDfStd = deformSepFracDf.apply(np.vectorize(elementWiseStd))
-    fig = plt.figure(figsize=(8, 6))
-    deformSepFracDfAvg.T.plot(yerr=deformSepFracDfStd.T, linestyle='dashed', marker='o', ms=3)
-    plt.title(f"Fraction Bound Sites for {name}")
-    plt.ylabel("Fraction of Sites With a Peak")
-    plt.xticks(rotation=45)
-    plt.subplots_adjust(bottom=0.15)
-    plt.savefig(f"figures/deform/DeformExpandingSeed{name}Reps")
-    plt.close()
+            fracsPerDeform = {}
+            for deformCat in sitesPerDeform.keys():
+                fracsPerDeform[deformCat] = [(peaksPerDeform[deformCat][repNum] / sitesPerDeform[deformCat][repNum]) if sitesPerDeform[
+                                                                                                           deformCat][repNum] != 0 else 0.0 for repNum in range(numReps)]
+            fracSer = pd.Series(fracsPerDeform, name=seq)
+            fracSers.append(fracSer)
 
-    # plot bar chart of sites per deform
-    deformSepStiesDf = pd.concat(sitesSers, axis=1)
-    deformSepStiesDfAvg = deformSepStiesDf.apply(np.vectorize(elementWiseAvg))
-    deformSepStiesDfStd = deformSepStiesDf.apply(np.vectorize(elementWiseStd))
-    fig = plt.figure()
-    deformSepStiesDfAvg.T.plot(kind="bar", logy=True, yerr=deformSepStiesDfStd.T)
-    plt.title(f"Number of Sites By Deform for {name}")
-    plt.ylabel("Number of Sites")
-    plt.xticks(rotation=45)
-    plt.subplots_adjust(bottom=0.25)
-    plt.savefig(f"figures/deform/DeformExpandingSeedCountSites{name}Reps")
-    plt.close()
 
-    # plot bar chart of avg intensity per deform
-    deformSepIntenAvgDf = pd.concat(avgIntensitySers, axis=1)
-    deformSepIntenStdDf = pd.concat(stdIntensitySers, axis=1)
-    fig = plt.figure()
-    deformSepIntenAvgDf.T.plot(kind="bar", yerr=deformSepIntenStdDf.T, logy=True)
-    plt.title(f"Average Intensity for Peaks By Deform for {name}")
-    plt.ylabel("Average Peak Intensity")
-    plt.xticks(rotation=45)
-    plt.subplots_adjust(bottom=0.25)
-    plt.savefig(f"figures/deform/DeformExpandingSeedIntensity{name}Reps")
-    plt.close()
+        deformSepFracDf = pd.concat(fracSers, axis=1) # each element is a list of len 3 for 3 reps
+
+        deformSepStiesDf = pd.concat(sitesSers, axis=1)
+
+        deformSepIntenDf = pd.concat(intensitySers, axis=1) # each element is a list variable len as each val corresponda to 1 peak
+        # because this would make a very big pkl file, just save sum, std, avg for plotting instead of whole list
+        deformSepIntenSumDf = deformSepIntenDf.apply(np.vectorize(np.sum))
+        deformSepIntenAvgDf = deformSepIntenDf.apply(np.vectorize(np.average))
+        deformSepIntenStdDf = deformSepIntenDf.apply(np.vectorize(np.std))
+
+        dfsToSave = {"deformSepFracDf": deformSepFracDf,
+                     "deformSepStiesDf": deformSepStiesDf,
+                     "deformSepIntenSumDf": deformSepIntenSumDf,
+                     "deformSepIntenAvgDf": deformSepIntenAvgDf,
+                     "deformSepIntenStdDf": deformSepIntenStdDf
+                     }
+        destinationDir = f"DeformPlottingDfs/{deformAxis}/Cutoff={medDeformLimits}/{name}"
+        if not os.path.exists(destinationDir):
+            os.makedirs(destinationDir)
+        for varName in dfsToSave.keys():
+            with open(f"{destinationDir}/{varName}.pkl", "wb") as dill_file:
+                dill.dump(dfsToSave[varName], dill_file)
