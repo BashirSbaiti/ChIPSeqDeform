@@ -1,4 +1,5 @@
 import os
+import time
 
 import pandas as pd
 import numpy as np
@@ -6,7 +7,6 @@ from Bio import SeqIO
 from matplotlib import pyplot as plt
 import regex as re
 from Bio.Seq import Seq
-import dill
 
 plt.tight_layout()
 
@@ -44,14 +44,14 @@ class GenomicTgtSite:
         self.gRNA = self.getgRNA()
         self.context5, self.context3 = self.getContext(contextLen) if self.getContext(contextLen) is not None else (
             None, None)
-        self.deform5, self.deform3 = self.getDeform()
+        self.deform = self.getDeform()
 
     def __repr__(self):
         PRINT_DEFORM = True
         VERBOSE_SEQ = False
         if PRINT_DEFORM:
             str = f"Target site with PAMLoc = {self.PAMLoc}; gRNA = {self.gRNA}; Context5' = {self.context5}" \
-                  f" (len = {len(self.context5[0])} bp, deform = {self.deform5}); Context3' = {self.context3} (len = {len(self.context3[0])} bp, deform = {self.deform3})"
+                  f" (len = {len(self.context5[0])} bp; Context3' = {self.context3} (len = {len(self.context3[0])} bp; deform = {self.deform})"
         else:
             str = f"Target site with PAMLoc = {self.PAMLoc}; gRNA = {self.gRNA}; Context5' = {self.context5}" \
                   f" (len = {len(self.context5[0])} bp); Context3' = {self.context3} (len = {len(self.context3[0])})"
@@ -102,142 +102,191 @@ class GenomicTgtSite:
         return (context5Fw, context5Rv), (context3Fw, context3Rv)
 
     def getDeform(self):
-        """ :returns tuple of (avg deform L, avg deform R) over context"""
+        """ :returns series of average deform over context for all axes"""
         context5DeformAvg, context3DeformAvg = getStrandDeform(self.context5[0]), getStrandDeform(self.context3[0])
 
-        return context5DeformAvg, context3DeformAvg
+        return (context5DeformAvg + context3DeformAvg) / 2
 
 
-### import referance genome in the same way as main.py
+### import referance genome in the same way as file_importing.py
 RefGenomeFname = "Rostain Supp Info/MG1655 Referance Genome/GCA_000005845.2_ASM584v2_genomic.fna"
 record = SeqIO.parse(RefGenomeFname, "fasta")
 refObj = list(record)[0]
 refGenome = (refObj.seq, refObj.seq.reverse_complement())
 
-with open("allPeaksDfReps.pkl", "rb") as dill_file:
-    allPeaksDfReps = dill.load(dill_file)
+if __name__ == "__main__":
 
-# Looking at deform across the genome
-# We will use nonoverlapping chunks of chunkSize bp
-deformAxs = ["Twist", "Tilt", "Roll", "Shift", "Slide", "Rise"]
+    # with open("allPeaksDfReps.pkl", "rb") as dill_file:
+    #    allPeaksDfReps = dill.load(dill_file)
 
-if PLOT_GENOME_DEFORM:
-    chunkSize = 1000
-    allSers = list()
-    for chunkStart in range(0, LEN_CHR - (chunkSize) + 1, chunkSize):
-        chunkStop = chunkStart + chunkSize
-        chunk = refGenome[0][chunkStart:chunkStop]
-        chunkDeform = pd.Series(getStrandDeform(chunk), name=chunkStart, dtype=float)
-        allSers.append(chunkDeform)
-    allChunksDeformDf = pd.concat(allSers, axis=1)
+    allPeaksDfReps = pd.read_csv("allPeaksDfReps.csv", sep="\t", encoding="utf-8", index_col=0)
+    # for some reason pandas renames duplicate columns names when reading csv's, below code will reverse this renaming
+    for colname in allPeaksDfReps.columns:
+        allPeaksDfReps.rename(columns={colname: colname if colname.find(".") == -1 else colname[0:colname.find(".")]},
+                              inplace=True)
 
-    for ax in deformAxs:
-        deformOfAx = allChunksDeformDf.loc[ax, :]
-        plt.figure()
-        plt.title(f"Distribution of Deform in {ax}, Genome Chunks of {chunkSize}")
-        plt.boxplot(deformOfAx.array)
-        # plt.yticks(np.linspace(plt.ylim()[0], plt.ylim()[1], 20))
-        # plt.hist(deformOfAx.array, bins=1000)
-        # plt.savefig(f"figures/deform/{ax}DistAcrossGenomeChunk{chunkSize}")
-        plt.savefig(f"figures/deform/{ax}DistAcrossGenomeChunk{chunkSize}Box")
-        plt.close()
+    # Looking at deform across the genome
+    # We will use nonoverlapping chunks of chunkSize bp
+    deformAxs = ["Twist", "Tilt", "Roll", "Shift", "Slide", "Rise"]
 
-# Redoing expanding seed calcs
+    if not os.path.isfile("allChunksDeformDf.csv"):  # does file exist yet
+        chunkSize = 1000
+        allSers = list()
+        for chunkStart in range(0, LEN_CHR - (chunkSize) + 1, chunkSize):
+            chunkStop = chunkStart + chunkSize
+            chunk = refGenome[0][chunkStart:chunkStop]
+            chunkDeform = pd.Series(getStrandDeform(chunk), name=chunkStart, dtype=float)
+            allSers.append(chunkDeform)
+        allChunksDeformDf = pd.concat(allSers, axis=1)
+        allChunksDeformDf.to_csv("allChunksDeformDf.csv", sep="\t", encoding="utf-8")
+    else:
+        allChunksDeformDf = pd.read_csv("allChunksDeformDf.csv", sep="\t", encoding="utf-8", index_col=0)
+    if PLOT_GENOME_DEFORM:
+        for ax in deformAxs:
+            deformOfAx = allChunksDeformDf.loc[ax, :]
+            plt.figure()
+            plt.title(f"Distribution of Deform in {ax}, Genome Chunks of {chunkSize}")
+            plt.boxplot(deformOfAx.array)
+            # plt.yticks(np.linspace(plt.ylim()[0], plt.ylim()[1], 20))
+            # plt.hist(deformOfAx.array, bins=1000)
+            # plt.savefig(f"figures/deform/{ax}DistAcrossGenomeChunk{chunkSize}")
+            plt.savefig(f"figures/deform/{ax}DistAcrossGenomeChunk{chunkSize}Box")
+            plt.close()
 
-AGGAAseq = "GGGACCTAAGATTTGAGGAA" + ".GG"
-ACCCAseq = "TCGAACACACTCTCTACCCA" + ".GG"
-LacZseq = "TCGTTTTACAACGTCGTGAC" + ".GG"
+    # Redoing expanding seed calcs with deform
 
-bindSites = [LacZseq, AGGAAseq, ACCCAseq]
-names = ["lacZ", "AGGAA", "ACCCA"]
+    AGGAAseq = "GGGACCTAAGATTTGAGGAA" + ".GG"
+    ACCCAseq = "TCGAACACACTCTCTACCCA" + ".GG"
+    LacZseq = "TCGTTTTACAACGTCGTGAC" + ".GG"
 
-deformAxis = "Rise"
-medDeformLimitss = [(7.782, 7.798), (7.784, 7.796), (7.788, 7.792)]
-# inclusive on both sides
+    bindSites = [LacZseq, AGGAAseq, ACCCAseq]
+    names = ["lacZ", "AGGAA", "ACCCA"]
 
-for medDeformLimits in medDeformLimitss:
-    for name, bindSite in zip(names, bindSites):
-        peakSers = allPeaksDfReps.loc[:, name]
-        numReps = len(peakSers.columns)
-        seqs = [bindSite[start:] for start in range(len(bindSite) - 1 - 9, len(bindSite) - 2)] # series of differing complementarity to gRNA+PAM
-        fracSers = list()  # index = deform (LMH), value = fracBound/total for each rep, one per overlap seq
-        sitesSers = list()  # index = deform (LMH), value = total for each rep, one per overlap seq
-        intensitySers = list()  # index = deform (LMH), value = intensity all peaks across reps and in same rep, one per overlap seq
+    deformAxis = "Rise"
+    fracsHL = [.18]  # top what frac and bottom what frac are considered high and low deform respectively
+    medDeformLimitss = list()  # list of tuples defining hard numeric cutoffs for med
 
-        foundPAMEnds = list()  # keep track of end of PAM of every seq we find so we dont double count one ...ngg in multiple categories
+    # calculate hard numeric cutoffs based on fracsHL
+    deformOfAx = allChunksDeformDf.loc[deformAxis, :].sort_values()
+    for fracHL in fracsHL:
+        lowCutoff = deformOfAx.iloc[int(fracHL * len(deformOfAx))]
+        highCutoff = deformOfAx.iloc[int((1 - fracHL) * len(deformOfAx))]
+        medDeformLimitss.append((lowCutoff, highCutoff))
 
-        count = 0
-        for seq in seqs:
-            peaksPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(numReps)}  # key = deform category (LMH), value is list of num peaks for each rep
-            sitesPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(numReps)}  # key = LMH, val = list of totalSites for each rep
-            intensitiesPerDeform = {"Low": [], "Medium": [], "High": []}  # key = LMH, val = list of intensities across all reps
-            # count += 1
-            # if count == 4:
-            #     break
-            # only using fw strand of referance strand because I assume that if they find binding to the reverse strand they map it to the fw
-            for find in re.finditer(seq, str(refGenome[0]), overlapped=False):
-                if find.span()[1] not in foundPAMEnds:
-                    if seq != ".GG":
-                        foundPAMEnds.append(find.span()[1])
-                    ts = GenomicTgtSite(refGenome, (0, find.span()[1] - 3, find.span()[1]), contextLen=500)
-                    deform = float(ts.deform5[deformAxis] + ts.deform5[deformAxis]) / 2.0
-                    if medDeformLimits[0] <= deform <= medDeformLimits[1]:
-                        deformCat = "Medium"
-                    elif deform > medDeformLimits[1]:
-                        deformCat = "High"
-                    else:
-                        deformCat = "Low"
-                    for repNum in range(numReps): # for each replicate of each gRNA
-                        peakSer = peakSers.iloc[:, repNum]
-                        sitePeaks = 0
-                        siteIntensity = 0
-                        for pos in range(find.span()[0], find.span()[1]):  # search for a peak at all positions
-                            if peakSer.loc[pos] > 0:
-                                sitePeaks = 1
-                                siteIntensity = peakSer.loc[pos]
-                                break  # do not double count peaks
+    # load precalculated deforms (all 500bp context)
+    # TODO: label files with 500bp for support with other context lens
+    start = time.perf_counter()
+    precalcSeqToDf = {}  # key = precalculated seq, value = df of deform at all occurances for all axes
+    for fileName in os.listdir():
+        if fileName.find("allGenomic") != -1 and fileName.find("Deform.csv") != -1:
+            seq = fileName[fileName.find("Genomic")+len("Genomic"):fileName.find("Deform")]
+            seqRe = seq.replace("N", ".")
 
-                        if sitePeaks == 0:  # if no peaks are found, the intensity at this site is zero
+            df = pd.read_csv(fileName, delimiter="\t", index_col=0)
+
+            precalcSeqToDf[seq] = df
+
+    end = time.perf_counter()
+    print(f"finished precalc file importing in {end-start} sec")
+    for medDeformLimits, fracHL in zip(medDeformLimitss, fracsHL):
+        for name, bindSite in zip(names, bindSites):
+            peakSers = allPeaksDfReps.loc[:, name]
+            numReps = len(peakSers.columns)
+            seqs = [bindSite[start:] for start in
+                    range(len(bindSite) - 1 - 9, len(bindSite) - 2)]  # series of differing complementarity to gRNA+PAM
+            fracSers = list()  # index = deform (LMH), value = fracBound/total for each rep, one per overlap seq
+            sitesSers = list()  # index = deform (LMH), value = total for each rep, one per overlap seq
+            intensitySers = list()  # index = deform (LMH), value = intensity all peaks across reps and in same rep, one per overlap seq
+
+            foundPAMEnds = list()  # keep track of end of PAM of every seq we find so we dont double count one ...ngg in multiple categories
+
+            count = 0
+            for seq in seqs:
+                peaksPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps), "High": np.zeros(
+                    numReps)}  # key = deform category (LMH), value is list of num peaks for each rep
+                sitesPerDeform = {"Low": np.zeros(numReps), "Medium": np.zeros(numReps),
+                                  "High": np.zeros(numReps)}  # key = LMH, val = list of totalSites for each rep
+                intensitiesPerDeform = {"Low": [], "Medium": [],
+                                        "High": []}  # key = LMH, val = list of intensities across all reps
+                # count += 1
+                # if count == 4:
+                #     break
+                startTime = time.perf_counter()
+                # only using fw strand of referance strand because I assume that if they find binding to the reverse strand they map it to the fw
+                for find in re.finditer(seq, str(refGenome[0]), overlapped=False):
+                    if find.span()[1] not in foundPAMEnds:
+                        if seq != ".GG": # we search genome for ngg's last, so we only need to make sure identified ngg isnt part of a larger match
+                            foundPAMEnds.append(find.span()[1])
+
+                        # calculate deform
+                        if seq in precalcSeqToDf.keys():  # if it was already calculated, no need to do it again!
+                            deformDf = precalcSeqToDf[seq]
+                            deform = deformDf.loc[deformAxis, find.span()[0]]
+                        else:
+                            ts = GenomicTgtSite(refGenome, (0, find.span()[1] - 3, find.span()[1]), contextLen=500)
+                            deform = ts.deform[deformAxis]
+                        if medDeformLimits[0] <= deform <= medDeformLimits[1]:
+                            deformCat = "Medium"
+                        elif deform > medDeformLimits[1]:
+                            deformCat = "High"
+                        else:
+                            deformCat = "Low"
+                        for repNum in range(numReps):  # for each replicate of each gRNA
+                            peakSer = peakSers.iloc[:, repNum]
+                            sitePeaks = 0
                             siteIntensity = 0
+                            for pos in range(find.span()[0], find.span()[1]):  # search for a peak at all positions
+                                if peakSer.loc[pos] > 0:
+                                    sitePeaks = 1
+                                    siteIntensity = peakSer.loc[pos]
+                                    break  # do not double count peaks
 
-                        peaksPerDeform[deformCat][repNum] += sitePeaks
-                        if siteIntensity != 0:
-                            intensitiesPerDeform[deformCat].append(siteIntensity)
-                        sitesPerDeform[deformCat][repNum] += 1
+                            if sitePeaks == 0:  # if no peaks are found, the intensity at this site is zero
+                                siteIntensity = 0
 
-            intensitySer = pd.Series(intensitiesPerDeform, name=seq)
-            intensitySers.append(intensitySer)
+                            peaksPerDeform[deformCat][repNum] += sitePeaks
+                            if siteIntensity != 0:
+                                intensitiesPerDeform[deformCat].append(siteIntensity)
+                            sitesPerDeform[deformCat][repNum] += 1
+                endTime = time.perf_counter()
+                print(f"Finished {seq} in {endTime-startTime} sec")
+                intensitySer = pd.Series(intensitiesPerDeform, name=seq)
+                intensitySers.append(intensitySer)
 
-            sitesSer = pd.Series(sitesPerDeform, name=seq)
-            sitesSers.append(sitesSer)
+                sitesSer = pd.Series(sitesPerDeform, name=seq)
+                sitesSers.append(sitesSer)
 
-            fracsPerDeform = {}
-            for deformCat in sitesPerDeform.keys():
-                fracsPerDeform[deformCat] = [(peaksPerDeform[deformCat][repNum] / sitesPerDeform[deformCat][repNum]) if sitesPerDeform[
-                                                                                                           deformCat][repNum] != 0 else 0.0 for repNum in range(numReps)]
-            fracSer = pd.Series(fracsPerDeform, name=seq)
-            fracSers.append(fracSer)
+                fracsPerDeform = {}
+                for deformCat in sitesPerDeform.keys():
+                    fracsPerDeform[deformCat] = [
+                        (peaksPerDeform[deformCat][repNum] / sitesPerDeform[deformCat][repNum]) if sitesPerDeform[
+                                                                                                       deformCat][
+                                                                                                       repNum] != 0 else 0.0
+                        for repNum in range(numReps)]
+                fracSer = pd.Series(fracsPerDeform, name=seq)
+                fracSers.append(fracSer)
 
+            deformSepFracDf = pd.concat(fracSers, axis=1)  # each element is a list of len 3 for 3 reps
 
-        deformSepFracDf = pd.concat(fracSers, axis=1) # each element is a list of len 3 for 3 reps
+            deformSepStiesDf = pd.concat(sitesSers, axis=1)
 
-        deformSepStiesDf = pd.concat(sitesSers, axis=1)
+            deformSepIntenDf = pd.concat(intensitySers,
+                                         axis=1)  # each element is a list variable len as each val corresponda to 1 peak
+            # because this would make a very big pkl file, just save sum, std, avg for plotting instead of whole list
+            deformSepIntenSumDf = deformSepIntenDf.apply(np.vectorize(np.sum))
+            deformSepIntenAvgDf = deformSepIntenDf.apply(np.vectorize(np.average))
+            deformSepIntenStdDf = deformSepIntenDf.apply(np.vectorize(np.std))
 
-        deformSepIntenDf = pd.concat(intensitySers, axis=1) # each element is a list variable len as each val corresponda to 1 peak
-        # because this would make a very big pkl file, just save sum, std, avg for plotting instead of whole list
-        deformSepIntenSumDf = deformSepIntenDf.apply(np.vectorize(np.sum))
-        deformSepIntenAvgDf = deformSepIntenDf.apply(np.vectorize(np.average))
-        deformSepIntenStdDf = deformSepIntenDf.apply(np.vectorize(np.std))
-
-        dfsToSave = {"deformSepFracDf": deformSepFracDf,
-                     "deformSepStiesDf": deformSepStiesDf,
-                     "deformSepIntenSumDf": deformSepIntenSumDf,
-                     "deformSepIntenAvgDf": deformSepIntenAvgDf,
-                     "deformSepIntenStdDf": deformSepIntenStdDf
-                     }
-        destinationDir = f"DeformPlottingDfs/{deformAxis}/Cutoff={medDeformLimits}/{name}"
-        if not os.path.exists(destinationDir):
-            os.makedirs(destinationDir)
-        for varName in dfsToSave.keys():
-            with open(f"{destinationDir}/{varName}.pkl", "wb") as dill_file:
-                dill.dump(dfsToSave[varName], dill_file)
+            dfsToSave = {"deformSepFracDf": deformSepFracDf,
+                         "deformSepStiesDf": deformSepStiesDf,
+                         "deformSepIntenSumDf": deformSepIntenSumDf,
+                         "deformSepIntenAvgDf": deformSepIntenAvgDf,
+                         "deformSepIntenStdDf": deformSepIntenStdDf
+                         }
+            destinationDir = f"DeformPlottingDfs/{deformAxis}/Cutoff={medDeformLimits}={fracHL * 100}%/{name}"
+            if not os.path.exists(destinationDir):
+                os.makedirs(destinationDir)
+            for varName in dfsToSave.keys():
+                # with open(f"{destinationDir}/{varName}.pkl", "wb") as dill_file:
+                #    dill.dump(dfsToSave[varName], dill_file)
+                dfsToSave[varName].to_csv(f"{destinationDir}/{varName}.csv", sep="\t", encoding="utf-8")

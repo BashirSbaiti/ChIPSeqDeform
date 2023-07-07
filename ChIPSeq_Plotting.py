@@ -72,8 +72,10 @@ for ser in allPeakSers:
     allPeakArrLabeled.append(peakArrLabeled)
 peaksArrDf = pd.concat(allPeakArrLabeled, axis=1)
 
-with open("allPeaksDfReps.pkl", "wb") as dill_file:
-    dill.dump(peaksArrDf, dill_file)
+#with open("allPeaksDfReps.pkl", "wb") as dill_file:
+#    dill.dump(peaksArrDf, dill_file)
+
+peaksArrDf.to_csv("allPeaksDfReps.csv", sep="\t", encoding="utf-8")
 
     ## Verify that all loc distances are 1, so we can just use the start loc as peak pos
 for ser in allPeakSers:
@@ -119,6 +121,16 @@ for ser in allPeakSers:
 allArrs = [arr / 3 for arr in allArrs]
 # len = 3 [lacZ, AGGAA, ACCCA]
 names = ["lacZ", "AGGAA", "ACCCA"]
+
+for grnaNum in range(len(allArrs)):
+    for i, el in enumerate(allArrs[grnaNum]):
+        if el != 0:
+            start = i - 10
+            stop = i + 10
+            for j, surr in enumerate(allArrs[grnaNum][start:stop]):
+                if surr != 0 and i != start+j:
+                    allArrs[grnaNum][i] += surr
+                    allArrs[grnaNum][start+j] = 0
 
 allArrsNonzero = list()
 # nonzero version of allArrs, each list element still corresponds to one gRNA but instead represented by a pd series
@@ -176,7 +188,7 @@ LacZseq = "TCGTTTTACAACGTCGTGAC" + ".GG"
 bindSites = [LacZseq, AGGAAseq, ACCCAseq]
 names = ["lacZ", "AGGAA", "ACCCA"]
 
-### import referance genome in the same way as main.py
+### import referance genome in the same way as file_importing.py
 RefGenomeFname = "Rostain Supp Info/MG1655 Referance Genome/GCA_000005845.2_ASM584v2_genomic.fna"
 record = SeqIO.parse(RefGenomeFname, "fasta")
 refObj = list(record)[0]
@@ -187,7 +199,7 @@ if PLOT_EXPANDING_SEED:
     def countPeaksInSpan(peakSer, span):
         """ :param peakSer: series of peaks where index = location, value = intensity
             :param span: array like of (inclusive, exclusive) specifying span to count peaks in"""
-        return 1 if len([val for ind, val in peakSer.items() if span[0] <= ind < span[1]])>0 else 0
+        return 1 if len([val for ind, val in peakSer.items() if span[0] <= ind < span[1]]) > 0 else 0
 
 
     sampleInd = 0
@@ -251,112 +263,106 @@ plt.close()
 
 print(f"{time.time()}: Completed All Before Score Calcs!")
 
-## Impletment plotting of normalized sequence complementarity index and see how that varies across genome'
+## Impletment plotting of gRNA overlap and see how that varies across genome
 
-PAM_LOCALIZATION = False
 
-allScoreDicts = list()
+allOverlapDicts = list()  # key = overlaping sequence, value = length of overlap
 for ts, name in zip(bindSites, names):
-    scoreDict = {
-        ".GG": 3}  # key = match, value = corresponding score (we define PAM only as 3 so that ts overlap len = score, but scale is relative)
+    overlapDict = {
+        ".GG": 3}  # we define PAM is 3 to differentiate it from no seq overlap with no PAM site (this way overlap
+                   # len+ngg = int), we will later subtract 3 everywhere to get gRNA seq overlap
     for start in range(len(ts) - 4, -1, -1):
-        scoreDict[ts[start:]] = len(ts[start:])
-    allScoreDicts.append(scoreDict)
+        overlapDict[ts[start:]] = len(ts[start:])
+    allOverlapDicts.append(overlapDict)
 
-allScoreArr = list()
-for scoreDict, name in zip(allScoreDicts, names):
-    scoreArr = np.zeros(LEN_CHR)
+allOverlapsArr = list()
+for overlapDict, name in zip(allOverlapDicts, names):
+    overlapsArr = np.zeros(LEN_CHR)
     for strandNum, strand in enumerate(refGenome):
         strand = str(strand)
         for val in re.finditer(r".GG", strand, overlapped=True):
             start, stop = val.span()
-            origStart = start  # we will localize seq complementarity score at the location of the corresponding PAM site (start of PAM, N in NGG)
             exceededMaxMatch = False
             while not exceededMaxMatch:
                 start -= 1
                 if start < 0:
-                    raise Exception("Invalid Start index when calculating Comp Score")
+                    raise Exception("Invalid start index when calculating gRNA overlap. Implement circularization.")
                 newSeq = strand[start:stop]
                 generalNewSeq = newSeq[:-3] + ".GG"
-                if generalNewSeq not in scoreDict.keys():
+                if generalNewSeq not in overlapDict.keys():
                     exceededMaxMatch = True
             start += 1
             match = strand[start:stop]
             generalMatch = match[:-3] + ".GG"
-            score = scoreDict[generalMatch]
-            if PAM_LOCALIZATION:
-                scoreArr[origStart if strandNum == 0 else LEN_CHR - 1 - origStart] += score
-            else:
-                if strandNum == 0:
-                    newStart = start
-                    newStop = stop
-                elif strandNum == 1:
-                    newStart = len(scoreArr)-stop
-                    newStop = len(scoreArr)-start
-                scoreArr[newStart:newStop] = [val + score for val in scoreArr[newStart:newStop]]
-    allScoreArr.append(scoreArr)
+            overlaps = overlapDict[generalMatch]
+            if strandNum == 0:
+                newStart = start
+                newStop = stop
+            elif strandNum == 1:
+                newStart = len(overlapsArr) - stop
+                newStop = len(overlapsArr) - start
+            overlapsArr[newStart:newStop] = [max(overlaps - 2, val) for val in overlapsArr[newStart:newStop]]
+    allOverlapsArr.append(overlapsArr)
 
-print(f"{time.time()}: Completed Score Calculations!")
+print(f"{time.time()}: Completed gRNA Overlap Calculations!")
 # first, take rolling avg
-for scoreWindow in [10000]:
-    allScoresDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allScoreArr, names)],
-                            axis=1)  # this will not be useful unless we use window = 1 = no RA (used in later calculations)
-    if scoreWindow == 1:  # if scoreWindow == 1, don't do rolling average
-        raAllScoresDf = allScoresDf
-        rstdAllScoresDf = 0 * raAllScoresDf
+for overlapWindow in [10000]:
+    allOverlapsDf = pd.concat([pd.Series(arr, name=name) for arr, name in zip(allOverlapsArr, names)],
+                              axis=1)  # make no rollavg version for use later
+    if overlapWindow == 1:  # if overlapWindow == 1, don't do rolling average
+        raAllOverlapsDf = allOverlapsDf
+        rstdAllOverlapsDf = 0 * raAllOverlapsDf
     else:
-        # list(arr[slice]) + list(arr) copies the last scoreWindow-1 elements again, so they are not wiped out by rolling function
-        allScoresDfExpand = pd.concat(
-            [pd.Series(list(arr[-(scoreWindow - 1):]) + list(arr), name=name) for arr, name in zip(allScoreArr, names)],
+        # list(arr[slice]) + list(arr) copies the last overlapWindow-1 elements again, so they are not wiped out by rolling function
+        allOverlapsDfExpand = pd.concat(
+            [pd.Series(list(arr[-(overlapWindow - 1):]) + list(arr), name=name) for arr, name in zip(allOverlapsArr, names)],
             axis=1)
-        raAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).mean()
-        rstdAllScoresDfExpand = allScoresDfExpand.rolling(scoreWindow, axis=0).std()
-        raAllScoresDf = raAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
-        rstdAllScoresDf = rstdAllScoresDfExpand.iloc[scoreWindow - 1:, :].reset_index(drop=True)
+        raAllOverlapsDfExpand = allOverlapsDfExpand.rolling(overlapWindow, axis=0).mean()
+        rstdAllOverlapsDfExpand = allOverlapsDfExpand.rolling(overlapWindow, axis=0).std()
+        raAllOverlapsDf = raAllOverlapsDfExpand.iloc[overlapWindow - 1:, :].reset_index(drop=True)
+        rstdAllOverlapsDf = rstdAllOverlapsDfExpand.iloc[overlapWindow - 1:, :].reset_index(drop=True)
 
-    print(f"{time.time()}: Completed Score Rolling Avg!")
+    print(f"{time.time()}: Completed Overlap Rolling Avg!")
     # then, plot
     fig, axs = plt.subplots(len(names), 1, sharex="all", sharey="all", figsize=(8, 7))
     colors = ["red", "green", "blue"]
 
-    for colName, ax, color in zip(raAllScoresDf.columns, axs, colors):
-        rollAvg = raAllScoresDf.loc[:, colName]
-        rollStd = rstdAllScoresDf.loc[:, colName]
+    for colName, ax, color in zip(raAllOverlapsDf.columns, axs, colors):
+        rollAvg = raAllOverlapsDf.loc[:, colName]
+        rollStd = rstdAllOverlapsDf.loc[:, colName]
 
-        # ax.plot(rollAvg, ".", s=5, label=colName, color=color)
         ax.scatter(np.arange(0, len(rollAvg), 1), rollAvg, s=3, alpha=0.5, label=colName, color=color)
         ax.legend()
-        ax.set_ylabel("Score")
+        ax.set_ylabel("gRNA Overlap")
         # ax.fill_between(np.arange(0, len(rollAvg), 1), rollAvg - 0.0 * rollStd, rollAvg + 0.0 * rollStd, color=color,
         # alpha=0.5)
 
-    fig.suptitle(f"gRNA Complementarity Score across the genome for all gRNA, rolling window = {scoreWindow}bp")
+    fig.suptitle(f"gRNA Overlap across the genome for all gRNA, rolling window = {overlapWindow}bp")
     axs[-1].set_xlabel("Location on MG1655 Genome")
-    plt.ylabel("Score")
+    plt.ylabel("gRNA Overlap")
     plt.xticks(range(0, LEN_CHR, (LEN_CHR) // 24), rotation=45)
     plt.tight_layout()
     plt.subplots_adjust(wspace=0, hspace=0)
-    plt.savefig(f"figures/AllScoresComparisonRA{scoreWindow}{'DELOC' if not PAM_LOCALIZATION else ''}")
+    plt.savefig(f"figures/AllOverlapsComparisonRA{overlapWindow}")
     plt.close()
 
-## Plot complementarity score vs binding activity side by side to see if there is a relation
+## Plot overlaps vs binding activity side by side to see if there is a relation
 
-# TODO: add stds back in here after chatting with Adim
 for name in names:
-    rollAvgScore = raAllScoresDf.loc[:, name]
-    rollStdScore = rstdAllScoresDf.loc[:, name]
+    rollAvgOverlap = raAllOverlapsDf.loc[:, name]
+    rollStdOverlap = rstdAllOverlapsDf.loc[:, name]
 
     rollAvgBind = raAllPeaksDf.loc[:, name]
     rollStdBind = rstdAllPeaksDf.loc[:, name]
 
     fig, axs = plt.subplots(2, 1, sharex="all", figsize=(8, 5))
-    fig.suptitle(f"gRNA Complementarity Score vs Bind Activity for {name}, Rolling Avg {scoreWindow}bp")
-    if scoreWindow != bindWindow:
-        raise Exception(f"Score rolling avg window {scoreWindow} is not equal to bind window {bindWindow}.")
+    fig.suptitle(f"gRNA Overlap vs Bind Activity for {name}, Rolling Avg {overlapWindow}bp")
+    if overlapWindow != bindWindow:
+        raise Exception(f"gRNA Overlap rolling avg window {overlapWindow} is not equal to bind window {bindWindow}.")
 
-    axs[0].plot(rollAvgScore, label=f"{name} Comp Score")
+    axs[0].plot(rollAvgOverlap, label=f"{name} gRNA Overlap")
     axs[0].legend()
-    axs[0].set_ylabel("Comp Score")
+    axs[0].set_ylabel("gRNA Overlap")
 
     axs[1].plot(rollAvgBind, label=f"{name} Binding")
     axs[1].legend()
@@ -366,55 +372,64 @@ for name in names:
     plt.xticks(range(0, LEN_CHR, LEN_CHR // 24), rotation=45)
     plt.tight_layout()
     plt.subplots_adjust(wspace=0, hspace=0)
-    plt.savefig(f"figures/ScorevsBinding{name}SideBySide{'DELOC' if not PAM_LOCALIZATION else ''}")
+    plt.savefig(f"figures/OverlapvsBinding{name}SideBySide")
     plt.close()
 
 # Same as above, but plot one against the other
-USE_ROLLAVG = True
-ZOOM = False
+USE_ROLLAVG = False
 
-#TODO: why so many binding events at 0 comp score? probably because of other PAM sites like NAG, take this into acct ...
+# TODO: we dont currently take into account 0bp (pam only binding events), may be worth looking into
 
 for name in names:
     if USE_ROLLAVG:
-        score = raAllScoresDf.loc[:, name]
-        stdScore = rstdAllScoresDf.loc[:, name]
+        overlaps = raAllOverlapsDf.loc[:, name]
+        stdOverlaps = rstdAllOverlapsDf.loc[:, name]
 
         bind = raAllPeaksDf.loc[:, name]
         stdBind = rstdAllPeaksDf.loc[:, name]
     else:
-        score = allScoresDf.loc[:, name]
-        stdScore = 0 * score
+        overlaps = allOverlapsDf.loc[:, name]
+        stdOverlaps = 0 * overlaps
 
         bind = allPeaksDf.loc[:, name]
         stdBind = 0 * bind
 
     fig = plt.figure()
     if USE_ROLLAVG:
-        plt.title(f"Bind Activity vs gRNA Complementarity for {name}, Rolling Avg {scoreWindow}bp")
+        plt.title(f"Binding Intensity vs gRNA Overlap for {name}, Rolling Avg {overlapWindow}bp")
     else:
-        plt.title(f"Bind Activity vs gRNA Complementarity for {name}")
+        plt.title(f"Binding Intensity vs gRNA Overlap for {name}")
 
-    if scoreWindow != bindWindow and USE_ROLLAVG:
-        raise Exception(f"Score rolling avg window {scoreWindow} is not equal to bind window {bindWindow}.")
+    if overlapWindow != bindWindow and USE_ROLLAVG:
+        raise Exception(f"gRNA Overlap rolling avg window {overlapWindow} is not equal to bind window {bindWindow}.")
 
-    plt.scatter(x=score, y=bind, s=1, alpha=0.5)
-    plt.xlabel("Comp Score")
-    plt.ylabel("Binding Intensity")
-    if ZOOM and USE_ROLLAVG:
-        plt.xlim(left=0.35 if PAM_LOCALIZATION else 1.2)
+    # filter out zero intensity peaks
+    scoreFiltered = overlaps[bind != 0]
+    bindFiltered = bind[bind != 0]
+
+    plt.scatter(x=scoreFiltered, y=bindFiltered, s=3)
+    plt.xlabel("gRNA Overlap")
+    plt.ylabel("ChIP-Seq Binding Intensity")
+    plt.xlim(left=-0.3)
+    plt.xticks(np.arange(0, max(scoreFiltered) + 1, 1))
 
     plt.tight_layout()
     if USE_ROLLAVG:
-        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRA{bindWindow}{'DELOC' if not PAM_LOCALIZATION else ''}{'Zoom' if ZOOM else ''}")
+        plt.savefig(
+            f"figures/ScorevsBinding{name}OneAgainstOtherRA{bindWindow}")
     else:
-        plt.savefig(f"figures/ScorevsBinding{name}OneAgainstOtherRANone{'DELOC' if not PAM_LOCALIZATION else ''}{'Zoom' if ZOOM else ''}")
+        plt.savefig(
+            f"figures/OverlapvsBind{name}.svg")
     plt.close()
 
-# Pickle allPeaks, allBinds info to use in other files
+# Save allPeaks, allBinds info to use in other files
 
-with open("allPeaksDf.pkl", "wb") as dill_file:
-    dill.dump(allPeaksDf, dill_file)
+#with open("allPeaksDf.pkl", "wb") as dill_file:
+#    dill.dump(allPeaksDf, dill_file)
 
-with open("allScoresDf.pkl", "wb") as dill_file:
-    dill.dump(allScoresDf, dill_file)
+allPeaksDf.to_csv("allPeaksDf.csv", sep="\t", encoding="utf-8")
+
+#with open("allOverlapsDf.pkl", "wb") as dill_file:
+#    dill.dump(allOverlapsDf, dill_file)
+
+allOverlapsDf.to_csv("allOverlapsDf.csv", sep="\t", encoding="utf-8")
